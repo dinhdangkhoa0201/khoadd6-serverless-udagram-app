@@ -1,0 +1,246 @@
+org: dinhdangkhoa0201
+console: true
+service: khoadd6-serverless-udagram-app
+
+# Define serverless plugins
+plugins:
+    - serverless-webpack
+    - serverless-aws-documentation
+    - serverless-reqvalidator-plugin
+
+provider:
+    name: aws
+    runtime: nodejs16.x
+    stage: ${opt:stage, 'dev'}
+    region: ${opt:stage, 'ap-southeast-1'}
+    # Define environment
+    environment:
+        GROUPS_TABLE: Groups-${self:provider.stage}
+        IMAGES_TABLE: Images-${self:provider.stage}
+        IMAGE_ID_INDEX: ImageIdIndex
+        IMAGES_S3_BUCKET: serverless-udagram-image-${self:provider.stage}
+        SIGNED_URL_EXPIRATION: 300
+    # Define Role to Scan and Write on DynamoDB
+    iamRoleStatements:
+        -   Effect: Allow
+            Action:
+                - dynamodb:Scan
+                - dynamodb:PutItem
+                - dynamodb:GetItem
+            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.GROUPS_TABLE}
+        -   Effect: Allow
+            Action:
+                - dynamodb:Query
+                - dynamodb:PutItem
+            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+        -   Effect: Allow
+            Action:
+                - dynamodb:Query
+            Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/index/${self:provider.environment.IMAGE_ID_INDEX}
+        -   Effect: Allow
+            Action:
+                - s3:PutObject
+                - s3:GetObject
+            Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+
+custom:
+    topicName: imagesTopic-${self:provider.stage}
+    documentation:
+        api:
+            info:
+                version: v1.0.0
+                title: Udagram API
+                description: Serverless application for images sharing
+        models:
+            -   name: GroupRequest
+                contentType: application/json
+                schema: ${file(models/create-group-request.json)}
+            -   name: ImageRequest
+                contentType: application/json
+                schema: ${file(models/create-image-request.json)}
+
+# Define serverless function
+functions:
+    # Define function getGroup
+    getGroup:
+        handler: src/lambda/http/getGroup.handler
+        events:
+            -   http:
+                    method: get
+                    path: groups
+                    cors: true
+
+    # Define function createGroup
+    createGroup:
+        handler: src/lambda/http/createGroup.handler
+        events:
+            -   http:
+                    method: post
+                    path: groups
+                    cors: true
+                    reqValidatorName: RequestBodyValidator
+                    documentation:
+                        summary: Create a new group
+                        description: Create a new group
+                        requestModels:
+                            "application/json": GroupRequest
+
+    # Define function getImages
+    getImages:
+        handler: src/lambda/http/getImages.handler
+        events:
+            -   http:
+                    method: get
+                    path: groups/{groupId}/images
+                    cors: true
+
+    # Define function getImage
+    getImage:
+        handler: src/lambda/http/getImage.handler
+        events:
+            -   http:
+                    method: get
+                    path: images/{imageId}
+                    cors: true
+
+    # Define function createImage
+    createImage:
+        handler: src/lambda/http/createImage.handler
+        events:
+            -   http:
+                    method: post
+                    path: groups/{groupId}/images
+                    cors: true
+                    reqValidatorName: RequestBodyValidator
+                    documentation:
+                        summary: Create a new image
+                        description: Create a new image
+                        requestModels:
+                            "application/json": ImageRequest
+
+    sendNotifications:
+        handler: src/lambda/s3/sendNotifications.handler
+
+# Define AWS Resources
+resources:
+    Resources:
+        # Create Api Gateway Validator
+        RequestBodyValidator:
+            Type: AWS::ApiGateway::RequestValidator
+            Properties:
+                Name: "request-body-validator"
+                RestApiId:
+                    Ref: ApiGatewayRestApi
+                ValidateRequestBody: true
+                ValidateRequestParameters: false
+
+        # Create DynamoDB Table: Groups-
+        GroupsDynamoDBTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                AttributeDefinitions:
+                    -   AttributeName: id
+                        AttributeType: S
+                KeySchema:
+                    -   AttributeName: id
+                        KeyType: HASH
+                BillingMode: PAY_PER_REQUEST
+                TableName: ${self:provider.environment.GROUPS_TABLE}
+
+        # Create DynamoDB Table: Images-
+        ImagesDynamoDBTable:
+            Type: AWS::DynamoDB::Table
+            Properties:
+                AttributeDefinitions:
+                    -   AttributeName: groupId
+                        AttributeType: S
+                    -   AttributeName: timestamp
+                        AttributeType: S
+                    -   AttributeName: imageId
+                        AttributeType: S
+                KeySchema:
+                    -   AttributeName: groupId
+                        KeyType: HASH
+                    -   AttributeName: timestamp
+                        KeyType: RANGE
+                GlobalSecondaryIndexes:
+                    -   IndexName: ${self:provider.environment.IMAGE_ID_INDEX}
+                        KeySchema:
+                            -   AttributeName: imageId
+                                KeyType: HASH
+                        Projection:
+                            ProjectionType: ALL
+                BillingMode: PAY_PER_REQUEST
+                TableName: ${self:provider.environment.IMAGES_TABLE}
+
+        # Create S3 Bucket
+        AttachmentsBucket:
+            Type: AWS::S3::Bucket
+            DependsOn: SNSTopicPolicy
+            Properties:
+                BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+                NotificationConfiguration:
+                    LambdaConfigurations:
+                        -   Event: s3:ObjectCreated:*
+                            Function: !GetAtt SendNotificationsLambdaFunction.Arn
+                CorsConfiguration:
+                    CorsRules:
+                        -   AllowedOrigins:
+                                - "*"
+                            AllowedHeaders:
+                                - "*"
+                            AllowedMethods:
+                                - GET
+                                - PUT
+                                - POST
+                                - DELETE
+                                - HEAD
+                            MaxAge: 3000
+
+        SendNotificationsPermission:
+            Type: AWS::Lambda::Permission
+            Properties:
+                FunctionName: !Ref SendNotificationsLambdaFunction
+                Principal: s3.amazonaws.com
+                Action: lambda:InvokeFunction
+                SourceAccount: !Ref AWS::AccountId
+                SourceArn: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}
+
+
+        BucketPolicy:
+            Type: AWS::S3::BucketPolicy
+            Properties:
+                PolicyDocument:
+                    Id: MyPolicy
+                    Version: "2012-10-17"
+                    Statement:
+                        -   Sid: PublicReadForGetBucketObjects
+                            Effect: Allow
+                            Principal: "*"
+                            Action: "s3:GetObject"
+                            Resource: "arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*"
+                Bucket: !Ref AttachmentsBucket
+
+        SNSTopicPolicy:
+            Type: AWS::SNS::TopicPolicy
+            Properties:
+                PolicyDocument:
+                    Version: "2012-10-17"
+                    Statement:
+                        -   Effect: "Allow"
+                            Principal:
+                                AWS: "*"
+                            Action: sns:Publish
+                            Resource:
+                              !Ref ImagesTopic
+                            Condition:
+                                ArnLike:
+                                    AWS:SourceArn: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}
+                Topics:
+                    - !Ref ImagesTopic
+
+        ImagesTopic:
+            Type: AWS::SNS::Topic
+            Properties:
+                DisplayName: Image bucket topic
+                TopicName: ${self:custom.topicName}
