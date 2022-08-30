@@ -1,6 +1,7 @@
 import * as AWS from "aws-sdk";
 import * as uuid from "uuid";
 import {APIGatewayProxyEvent, APIGatewayProxyHandler, APIGatewayProxyResult} from "aws-lambda";
+import "source-map-support/register"
 
 const docClient = new AWS.DynamoDB.DocumentClient();
 

@@ -1,5 +1,6 @@
 import {S3Event, S3Handler} from "aws-lambda";
 import * as AWS from "aws-sdk";
+import "source-map-support/register"
 
 const docClient = new AWS.DynamoDB.DocumentClient();
 
