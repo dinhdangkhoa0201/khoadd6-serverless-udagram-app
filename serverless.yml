@@ -144,6 +144,13 @@ functions:
             -   websocket:
                     route: $disconnect
 
+    syncWithElasticSearch:
+        handler: src/lambda/dynamoDb/elasticSearchSync.handler
+        events:
+            -   stream:
+                    type: dynamodb
+                    arn: !GetAtt ImagesDynamoDBTable.StreamArn
+
 # Define AWS Resources
 resources:
     Resources:
@@ -206,6 +213,8 @@ resources:
                         Projection:
                             ProjectionType: ALL
                 BillingMode: PAY_PER_REQUEST
+                StreamSpecification:
+                    StreamViewType: NEW_IMAGE
                 TableName: ${self:provider.environment.IMAGES_TABLE}
 
         # Create S3 Bucket
@@ -279,3 +288,27 @@ resources:
             Properties:
                 DisplayName: Image bucket topic
                 TopicName: ${self:custom.topicName}
+
+#        ImagesSearch:
+#            Type: AWS::Elasticsearch::Domain
+#            Properties:
+#                ElasticsearchVersion: "6.7"
+#                DomainName: images-search-${self:provider.stage}
+#                ElasticsearchClusterConfig:
+#                    DedicatedMasterEnabled: false
+#                    InstanceCount: "1"
+#                    ZoneAwarenessEnabled: false
+#                    InstanceType: t2.small.elasticsearch
+#                EBSOptions:
+#                    EBSEnabled: true
+#                    Iops: 0
+#                    VolumeSize: 10
+#                    VolumeType: "gp2"
+#                AccessPolicies:
+#                    Version: "2012-10-17"
+#                    Statement:
+#                        -   Effect: Allow
+#                            Principal:
+#                                AWS: "*"
+#                            Action: "es:ESHttp*"
+#                            Resource: "arn:aws:es:${self:provider.region}:${AWS::AccountId}:domain/images-search-${self:provider.stage}/*"
