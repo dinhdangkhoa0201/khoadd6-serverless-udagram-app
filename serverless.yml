@@ -131,6 +131,16 @@ functions:
             API_ID:
                 Ref: WebsocketsApi
         handler: src/lambda/s3/sendNotifications.handler
+        events:
+            -   sns:
+                    arn:
+                        Fn::Join:
+                            - ":"
+                            -   - arn:aws:sns
+                                - Ref: AWS::Region
+                                - Ref: AWS::AccountId
+                                - ${self:custom.topicName}
+                    topicName: ${self:custom.topicName}
 
     connectWebSocket:
         handler: src/lambda/websocket/connect.handler
@@ -227,6 +237,9 @@ resources:
                     LambdaConfigurations:
                         -   Event: s3:ObjectCreated:*
                             Function: !GetAtt SendNotificationsLambdaFunction.Arn
+                    TopicConfigurations:
+                        -   Event: s3:ObjectCreated:Put
+                            Topic: !Ref ImagesTopic
                 CorsConfiguration:
                     CorsRules:
                         -   AllowedOrigins:
